@@ -1,0 +1,22 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: nodejs-instrumentation-customized
+spec:
+  exporter:
+    endpoint: http://grafana-k8s-monitoring-alloy-receiver.default.svc.cluster.local:4318
+  propagators:
+    - tracecontext
+    - baggage
+  nodejs:
+    # Custom image with headersToSpanAttributes config (see Dockerfile and register.js)
+    # Default would be: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.69.0
+    image: nodejs-autoinst:0.2.1
+    env:
+      - name: OTEL_LOG_LEVEL
+        value: verbose
+      - name: OTEL_TRACES_EXPORTER
+        value: otlp
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"

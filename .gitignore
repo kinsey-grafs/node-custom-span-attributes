@@ -1,0 +1,18 @@
+# Secrets - DO NOT COMMIT
+.env
+*.env.local
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+
+# Large vendored directories (not needed for this demo)
+custom-instro/opentelemetry-operator/
