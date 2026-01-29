@@ -11,7 +11,7 @@ echo "==> Waiting for cluster to stabilize..."
 sleep 30
 
 echo "==> Building and deploying custom instrumentation..."
-cd "$SCRIPT_DIR/custom-instro/no-repo"
+cd "$SCRIPT_DIR/custom-instro/nodejs"
 bash install.sh
 
 echo "==> Waiting for instrumentation to be ready..."

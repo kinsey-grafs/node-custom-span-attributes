@@ -24,9 +24,9 @@ This repo shows how to:
 
 | File | Purpose |
 |------|---------|
-| `custom-instro/no-repo/register.js` | Custom instrumentation config that captures `X-Client-Id` header |
-| `custom-instro/no-repo/Dockerfile` | Extends the official OTel image with custom config |
-| `custom-instro/no-repo/nodejs-override-instrumentation.yaml` | Instrumentation CR using the custom image |
+| `custom-instro/nodejs/register.js` | Custom instrumentation config that captures `X-Client-Id` header |
+| `custom-instro/nodejs/Dockerfile` | Extends the official OTel image with custom config |
+| `custom-instro/nodejs/nodejs-override-instrumentation.yaml` | Instrumentation CR using the custom image |
 | `app/app.js` | Sample Node.js app that sets `X-Client-Id` response header |
 
 ### How Headers Become Span Attributes
@@ -142,7 +142,7 @@ You should see the `X-Client-Id` value captured as a span attribute on the HTTP 
 
 ## Customizing for Your Headers
 
-To capture different headers, modify `custom-instro/no-repo/register.js`:
+To capture different headers, modify `custom-instro/nodejs/register.js`:
 
 ```javascript
 headersToSpanAttributes: {
@@ -156,7 +156,7 @@ headersToSpanAttributes: {
 Then rebuild and redeploy:
 
 ```bash
-cd custom-instro/no-repo
+cd custom-instro/nodejs
 ./install.sh
 kubectl rollout restart deployment/nodejs-hello-world
 ```
@@ -165,19 +165,19 @@ kubectl rollout restart deployment/nodejs-hello-world
 
 This repo pins the OpenTelemetry Node.js auto-instrumentation version. You should periodically update to get bug fixes, new instrumentation libraries, and performance improvements.
 
-**Current version:** `0.69.0` (defined in `custom-instro/no-repo/Dockerfile`)
+**Current version:** `0.69.0` (defined in `custom-instro/nodejs/Dockerfile`)
 
 To update:
 
 1. Check for the latest version at [opentelemetry-operator releases](https://github.com/open-telemetry/opentelemetry-operator/releases) or [Docker Hub](https://hub.docker.com/r/otel/autoinstrumentation-nodejs/tags)
 
-2. Update the base image in `custom-instro/no-repo/Dockerfile`:
+2. Update the base image in `custom-instro/nodejs/Dockerfile`:
 
 ```dockerfile
 FROM otel/autoinstrumentation-nodejs:0.71.0  # Update version here
 ```
 
-3. Update the image tag in `custom-instro/no-repo/install.sh`:
+3. Update the image tag in `custom-instro/nodejs/install.sh`:
 
 ```bash
 VERSION=0.2.2  # Bump your custom image version
@@ -186,7 +186,7 @@ VERSION=0.2.2  # Bump your custom image version
 4. Rebuild and redeploy:
 
 ```bash
-cd custom-instro/no-repo
+cd custom-instro/nodejs
 ./install.sh
 kubectl rollout restart deployment/nodejs-hello-world
 ```
@@ -203,7 +203,7 @@ kubectl rollout restart deployment/nodejs-hello-world
 │   ├── .env.example        # Template for Grafana Cloud credentials
 │   └── .env                # Your credentials (gitignored)
 ├── custom-instro/
-│   └── no-repo/            # Custom instrumentation image
+│   └── nodejs/             # Custom Node.js instrumentation image
 │       ├── Dockerfile      # Extends official OTel image
 │       ├── register.js     # Custom SDK configuration
 │       ├── nodejs-override-instrumentation.yaml
