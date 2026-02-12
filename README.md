@@ -216,6 +216,287 @@ kubectl rollout restart deployment/nodejs-hello-world
 └── install.sh              # One-command full setup
 ```
 
+## Adapting for Your Own Environment
+
+This demo uses Kind for local development, but the pattern works in any Kubernetes cluster. Here's how to adapt it for your environment:
+
+### Prerequisites
+
+1. **OpenTelemetry Operator** installed in your cluster ([installation guide](https://github.com/open-telemetry/opentelemetry-operator#getting-started))
+2. **A container registry** accessible from your cluster (ECR, GCR, ACR, Docker Hub, etc.)
+3. **An OTLP endpoint** to receive traces (Grafana Cloud, Jaeger, or any OTLP-compatible backend)
+
+### Step 1: Customize the Instrumentation Config
+
+Edit `custom-instro/nodejs/register.js` to capture the headers you need:
+
+```javascript
+headersToSpanAttributes: {
+  server: {
+    requestHeaders: ["X-Tenant-Id", "X-Request-Id", "X-Correlation-Id"],
+    responseHeaders: ["X-Request-Id"],
+  },
+  client: {
+    requestHeaders: ["X-Tenant-Id"],
+    responseHeaders: [],
+  },
+},
+```
+
+### Step 2: Build and Push the Custom Image
+
+```bash
+# Set your registry
+REGISTRY="your-registry.example.com"
+IMAGE_NAME="custom-nodejs-autoinstrumentation"
+VERSION="1.0.0"
+
+# Build the image
+cd custom-instro/nodejs
+docker build -t ${REGISTRY}/${IMAGE_NAME}:${VERSION} .
+
+# Push to your registry
+docker push ${REGISTRY}/${IMAGE_NAME}:${VERSION}
+```
+
+### Step 3: Deploy the Instrumentation CR
+
+Create an `Instrumentation` resource pointing to your custom image and OTLP endpoint:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: custom-nodejs-instrumentation
+  namespace: your-namespace  # or default
+spec:
+  exporter:
+    # Point to your OTLP endpoint (examples below)
+    # Grafana Alloy in-cluster:
+    endpoint: http://alloy.monitoring.svc.cluster.local:4318
+    # Or direct to Grafana Cloud (requires auth via env vars):
+    # endpoint: https://otlp-gateway-prod-us-east-0.grafana.net:443
+  propagators:
+    - tracecontext
+    - baggage
+  nodejs:
+    image: your-registry.example.com/custom-nodejs-autoinstrumentation:1.0.0
+    env:
+      - name: OTEL_TRACES_EXPORTER
+        value: otlp
+      # Add auth if sending directly to Grafana Cloud:
+      # - name: OTEL_EXPORTER_OTLP_HEADERS
+      #   value: "Authorization=Basic <base64-encoded-credentials>"
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"  # 100% sampling, adjust for production
+```
+
+Apply it:
+
+```bash
+kubectl apply -f instrumentation.yaml
+```
+
+### Step 4: Annotate Your Deployments
+
+Add the annotation to any Node.js deployment you want instrumented:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-nodejs-app
+spec:
+  template:
+    metadata:
+      annotations:
+        # Reference the Instrumentation CR by name
+        instrumentation.opentelemetry.io/inject-nodejs: "true"
+        # Or specify a specific Instrumentation CR:
+        # instrumentation.opentelemetry.io/inject-nodejs: "custom-nodejs-instrumentation"
+    spec:
+      containers:
+      - name: app
+        image: my-app:latest
+```
+
+Restart your deployment to pick up the instrumentation:
+
+```bash
+kubectl rollout restart deployment/my-nodejs-app
+```
+
+### Step 5: Verify
+
+Send a request with your custom header and check your tracing backend:
+
+```bash
+kubectl port-forward svc/my-nodejs-app 8080:80
+curl http://localhost:8080 -H "X-Tenant-Id: customer-123"
+```
+
+You should see `http.request.header.x_tenant_id: customer-123` as a span attribute.
+
+### Common OTLP Endpoint Configurations
+
+| Backend | Endpoint Example |
+|---------|------------------|
+| Grafana Alloy (in-cluster) | `http://alloy.monitoring.svc.cluster.local:4318` |
+| Grafana Cloud | `https://otlp-gateway-prod-us-east-0.grafana.net:443` |
+| Jaeger | `http://jaeger-collector.tracing.svc.cluster.local:4318` |
+| OpenTelemetry Collector | `http://otel-collector.monitoring.svc.cluster.local:4318` |
+
+## Adding to an Existing Project
+
+If you want to add custom span attributes to an existing Node.js project, here's exactly what to add to your repo.
+
+### Files to Add
+
+Create a directory in your project (e.g., `otel/nodejs-instrumentation/`) with these three files:
+
+**1. `otel/nodejs-instrumentation/register.js`**
+
+```javascript
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+
+const opentelemetry = require("@opentelemetry/sdk-node");
+const { diag, DiagConsoleLogger } = require("@opentelemetry/api");
+const { getStringFromEnv, diagLogLevelFromString } = require("@opentelemetry/core");
+const { getNodeAutoInstrumentations, getResourceDetectorsFromEnv } = require("./utils");
+
+const logLevel = getStringFromEnv("OTEL_LOG_LEVEL");
+if (logLevel != null) {
+  diag.setLogger(new DiagConsoleLogger(), {
+    logLevel: diagLogLevelFromString(logLevel),
+  });
+}
+
+const sdk = new opentelemetry.NodeSDK({
+  instrumentations: getNodeAutoInstrumentations({
+    "@opentelemetry/instrumentation-http": {
+      headersToSpanAttributes: {
+        client: {
+          requestHeaders: ["X-Client-Id", "X-Tenant-Id", "X-Request-Id"],  // Customize these
+          responseHeaders: ["X-Client-Id"],
+        },
+        server: {
+          requestHeaders: ["X-Client-Id", "X-Tenant-Id", "X-Request-Id"],  // Customize these
+          responseHeaders: ["X-Client-Id"],
+        },
+      },
+    },
+  }),
+  resourceDetectors: getResourceDetectorsFromEnv(),
+});
+
+try {
+  sdk.start();
+  diag.info("OpenTelemetry automatic instrumentation started successfully");
+} catch (error) {
+  diag.error(
+    "Error initializing OpenTelemetry SDK. Your application is not instrumented and will not produce telemetry",
+    error
+  );
+}
+
+async function shutdown() {
+  try {
+    await sdk.shutdown();
+    diag.debug("OpenTelemetry SDK terminated");
+  } catch (error) {
+    diag.error("Error terminating OpenTelemetry SDK", error);
+  }
+}
+
+process.on("SIGTERM", shutdown);
+process.once("beforeExit", shutdown);
+```
+
+**2. `otel/nodejs-instrumentation/Dockerfile`**
+
+```dockerfile
+FROM otel/autoinstrumentation-nodejs:0.69.0
+COPY register.js /autoinstrumentation
+COPY register.js /autoinstrumentation/autoinstrumentation.js
+```
+
+**3. `otel/nodejs-instrumentation/instrumentation.yaml`**
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: nodejs-custom-headers
+spec:
+  exporter:
+    endpoint: http://your-otlp-endpoint:4318  # Update this
+  propagators:
+    - tracecontext
+    - baggage
+  nodejs:
+    image: your-registry/nodejs-custom-instrumentation:1.0.0  # Update this
+    env:
+      - name: OTEL_TRACES_EXPORTER
+        value: otlp
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+```
+
+### Add to Your CI/CD Pipeline
+
+Add a build step for the custom instrumentation image:
+
+```yaml
+# Example GitHub Actions step
+- name: Build and push custom OTel instrumentation
+  run: |
+    docker build -t $REGISTRY/nodejs-custom-instrumentation:$VERSION ./otel/nodejs-instrumentation
+    docker push $REGISTRY/nodejs-custom-instrumentation:$VERSION
+```
+
+### Update Your Kubernetes Manifests
+
+Add the annotation to your existing deployment:
+
+```yaml
+# In your existing deployment.yaml
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "nodejs-custom-headers"
+```
+
+### Checklist
+
+- [ ] Create `otel/nodejs-instrumentation/` directory with the three files above
+- [ ] Customize the headers list in `register.js`
+- [ ] Update the OTLP endpoint in `instrumentation.yaml`
+- [ ] Update the image name/registry in `instrumentation.yaml`
+- [ ] Add Docker build step to your CI/CD pipeline
+- [ ] Add `kubectl apply -f otel/nodejs-instrumentation/instrumentation.yaml` to your deployment process
+- [ ] Add the annotation to your app's Kubernetes manifests
+- [ ] Restart your deployments
+
+### Minimal File Structure
+
+```
+your-existing-project/
+├── src/
+├── package.json
+├── Dockerfile
+├── k8s/
+│   └── deployment.yaml        # Add annotation here
+└── otel/
+    └── nodejs-instrumentation/
+        ├── Dockerfile         # Builds custom instrumentation image
+        ├── register.js        # Your header configuration
+        └── instrumentation.yaml  # Kubernetes CR
+```
+
 ## Cleanup
 
 ```bash
