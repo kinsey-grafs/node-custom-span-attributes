@@ -245,19 +245,34 @@ headersToSpanAttributes: {
 
 ### Step 2: Build and Push the Custom Image
 
+Build the `custom-instro/nodejs/Dockerfile` and push to your registry:
+
 ```bash
 # Set your registry
 REGISTRY="your-registry.example.com"
 IMAGE_NAME="custom-nodejs-autoinstrumentation"
 VERSION="1.0.0"
 
-# Build the image
+# Build the image (uses custom-instro/nodejs/Dockerfile)
 cd custom-instro/nodejs
 docker build -t ${REGISTRY}/${IMAGE_NAME}:${VERSION} .
 
 # Push to your registry
 docker push ${REGISTRY}/${IMAGE_NAME}:${VERSION}
 ```
+
+> **Troubleshooting: `exec format error`**
+> 
+> If you see `opentelemetry-auto-instrumentation-nodejs exec /bin/cp: exec format error` in your init container logs, there's a CPU architecture mismatch between your custom instrumentation image and the cluster nodes. This commonly happens when building on Apple Silicon (ARM64) but running on x86_64 cluster nodes.
+> 
+> **Fix:** Build for the correct platform:
+> ```bash
+> # For x86_64/amd64 clusters (most cloud providers)
+> docker build --platform linux/amd64 -t ${REGISTRY}/${IMAGE_NAME}:${VERSION} .
+> 
+> # Or build multi-platform image
+> docker buildx build --platform linux/amd64,linux/arm64 -t ${REGISTRY}/${IMAGE_NAME}:${VERSION} --push .
+> ```
 
 ### Step 3: Deploy the Instrumentation CR
 
@@ -417,6 +432,7 @@ process.once("beforeExit", shutdown);
 **2. `otel/nodejs-instrumentation/Dockerfile`**
 
 ```dockerfile
+# Update version to latest: https://hub.docker.com/r/otel/autoinstrumentation-nodejs/tags
 FROM otel/autoinstrumentation-nodejs:0.69.0
 COPY register.js /autoinstrumentation
 COPY register.js /autoinstrumentation/autoinstrumentation.js
